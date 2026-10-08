@@ -3,9 +3,12 @@ package http
 import (
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/earnmart/earnmart-be/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -79,6 +82,69 @@ func secureHeaders() gin.HandlerFunc {
 		c.Header("Referrer-Policy", "no-referrer")
 		if strings.EqualFold(c.GetHeader("X-Forwarded-Proto"), "https") || c.Request.TLS != nil {
 			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		c.Next()
+	}
+}
+
+func authenticate(auth *service.AuthService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := bearerToken(c.GetHeader("Authorization"))
+		if token == "" {
+			failure(c, http.StatusUnauthorized, "AUTH_REQUIRED", "Authentication is required", nil)
+			return
+		}
+		user, claims, err := auth.ValidateAccess(c.Request.Context(), token)
+		if err != nil {
+			domainFailure(c, err)
+			return
+		}
+		c.Set("auth_user_id", user.ID)
+		c.Set("auth_session_id", claims.SessionID)
+		c.Next()
+	}
+}
+
+func maintenanceGate(enabled bool, message string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if enabled {
+			failure(c, http.StatusServiceUnavailable, "MAINTENANCE_MODE", message, nil)
+			return
+		}
+		c.Next()
+	}
+}
+
+func rateLimit(maxRequests int, window time.Duration) gin.HandlerFunc {
+	type visitor struct {
+		count   int
+		resetAt time.Time
+	}
+
+	var mu sync.Mutex
+	visitors := make(map[string]visitor)
+
+	return func(c *gin.Context) {
+		now := time.Now()
+		key := c.ClientIP()
+
+		mu.Lock()
+		entry, found := visitors[key]
+		if !found || !now.Before(entry.resetAt) {
+			entry = visitor{resetAt: now.Add(window)}
+		}
+		entry.count++
+		visitors[key] = entry
+		mu.Unlock()
+
+		if entry.count > maxRequests {
+			retryAfter := int(time.Until(entry.resetAt).Seconds())
+			if retryAfter < 1 {
+				retryAfter = 1
+			}
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+			failure(c, http.StatusTooManyRequests, "RATE_LIMITED", "Bạn thao tác quá nhanh. Vui lòng thử lại sau.", nil)
+			return
 		}
 		c.Next()
 	}

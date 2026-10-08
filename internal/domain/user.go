@@ -6,11 +6,13 @@ import (
 )
 
 type User struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Email     string    `json:"email"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID              string        `json:"id"`
+	Name            string        `json:"name"`
+	Email           string        `json:"email"`
+	Status          AccountStatus `json:"status"`
+	EmailVerifiedAt *time.Time    `json:"email_verified_at,omitempty"`
+	CreatedAt       time.Time     `json:"created_at"`
+	UpdatedAt       time.Time     `json:"updated_at"`
 }
 
 type UserRepository interface {

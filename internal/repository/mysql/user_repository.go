@@ -10,13 +10,15 @@ import (
 )
 
 type userModel struct {
-	ID           string         `gorm:"type:char(36);primaryKey"`
-	Name         string         `gorm:"type:varchar(120);not null"`
-	Email        string         `gorm:"type:varchar(255);not null;uniqueIndex"`
-	PasswordHash string         `gorm:"type:varchar(255);not null"`
-	CreatedAt    time.Time      `gorm:"not null"`
-	UpdatedAt    time.Time      `gorm:"not null"`
-	DeletedAt    gorm.DeletedAt `gorm:"index"`
+	ID              string `gorm:"type:char(36);primaryKey"`
+	Name            string `gorm:"type:varchar(120);not null"`
+	Email           string `gorm:"type:varchar(255);not null;uniqueIndex"`
+	PasswordHash    string `gorm:"type:varchar(255);not null"`
+	Status          string `gorm:"type:varchar(16);not null;default:ACTIVE"`
+	EmailVerifiedAt *time.Time
+	CreatedAt       time.Time      `gorm:"not null"`
+	UpdatedAt       time.Time      `gorm:"not null"`
+	DeletedAt       gorm.DeletedAt `gorm:"index"`
 }
 
 func (userModel) TableName() string { return "users" }
@@ -35,6 +37,7 @@ func (r *UserRepository) Create(ctx context.Context, user *domain.User, password
 		Name:         user.Name,
 		Email:        user.Email,
 		PasswordHash: passwordHash,
+		Status:       string(domain.AccountStatusActive),
 		CreatedAt:    user.CreatedAt,
 		UpdatedAt:    user.UpdatedAt,
 	}
@@ -121,10 +124,12 @@ func (r *UserRepository) EmailExists(ctx context.Context, email, excludeID strin
 
 func toDomain(model userModel) *domain.User {
 	return &domain.User{
-		ID:        model.ID,
-		Name:      model.Name,
-		Email:     model.Email,
-		CreatedAt: model.CreatedAt,
-		UpdatedAt: model.UpdatedAt,
+		ID:              model.ID,
+		Name:            model.Name,
+		Email:           model.Email,
+		Status:          domain.AccountStatus(model.Status),
+		EmailVerifiedAt: model.EmailVerifiedAt,
+		CreatedAt:       model.CreatedAt,
+		UpdatedAt:       model.UpdatedAt,
 	}
 }

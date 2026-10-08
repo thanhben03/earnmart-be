@@ -16,11 +16,24 @@ type Config struct {
 	HTTP     HTTPConfig
 	Database DatabaseConfig
 	Security SecurityConfig
+	SMTP     SMTPConfig
+}
+
+type SMTPConfig struct {
+	Host     string
+	Port     string
+	Username string
+	Password string
+	From     string
 }
 
 type AppConfig struct {
-	Name        string
-	Environment string
+	Name               string
+	Environment        string
+	MaintenanceMode    bool
+	MaintenanceMessage string
+	TermsVersion       string
+	TermsContent       string
 }
 
 type HTTPConfig struct {
@@ -48,7 +61,15 @@ func (c DatabaseConfig) DSN() string {
 }
 
 type SecurityConfig struct {
-	BcryptCost int
+	BcryptCost      int
+	JWTSecret       string
+	AccessTokenTTL  time.Duration
+	RefreshTokenTTL time.Duration
+	OTPTokenTTL     time.Duration
+	ResetTicketTTL  time.Duration
+	OTPPepper       string
+	ExposeTestOTP   bool
+	GoogleClientIDs []string
 }
 
 func Load() (Config, error) {
@@ -86,11 +107,31 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	accessTokenTTL, err := durationEnv("ACCESS_TOKEN_TTL", 15*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	refreshTokenTTL, err := durationEnv("REFRESH_TOKEN_TTL", 30*24*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	otpTokenTTL, err := durationEnv("OTP_TOKEN_TTL", 10*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	resetTicketTTL, err := durationEnv("RESET_TICKET_TTL", 10*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg := Config{
 		App: AppConfig{
-			Name:        stringEnv("APP_NAME", "earnmart-api"),
-			Environment: stringEnv("APP_ENV", "development"),
+			Name:               stringEnv("APP_NAME", "earnmart-api"),
+			Environment:        stringEnv("APP_ENV", "development"),
+			MaintenanceMode:    boolEnv("MAINTENANCE_MODE", false),
+			MaintenanceMessage: stringEnv("MAINTENANCE_MESSAGE", "Hệ thống đang bảo trì. Vui lòng thử lại sau."),
+			TermsVersion:       stringEnv("TERMS_VERSION", "2026-10-08"),
+			TermsContent:       stringEnv("TERMS_CONTENT", "Điều khoản sử dụng EarnMart"),
 		},
 		HTTP: HTTPConfig{
 			Port:             stringEnv("HTTP_PORT", "8080"),
@@ -110,7 +151,24 @@ func Load() (Config, error) {
 			MaxIdleConns:    maxIdleConns,
 			ConnMaxLifetime: connMaxLifetime,
 		},
-		Security: SecurityConfig{BcryptCost: bcryptCost},
+		Security: SecurityConfig{
+			BcryptCost:      bcryptCost,
+			JWTSecret:       stringEnv("JWT_SECRET", "development-only-change-this-secret-now"),
+			AccessTokenTTL:  accessTokenTTL,
+			RefreshTokenTTL: refreshTokenTTL,
+			OTPTokenTTL:     otpTokenTTL,
+			ResetTicketTTL:  resetTicketTTL,
+			OTPPepper:       stringEnv("OTP_PEPPER", "development-only-otp-pepper"),
+			ExposeTestOTP:   boolEnv("AUTH_EXPOSE_TEST_OTP", false),
+			GoogleClientIDs: csvEnv("GOOGLE_CLIENT_IDS", ""),
+		},
+		SMTP: SMTPConfig{
+			Host:     stringEnv("SMTP_HOST", ""),
+			Port:     stringEnv("SMTP_PORT", "587"),
+			Username: stringEnv("SMTP_USERNAME", ""),
+			Password: os.Getenv("SMTP_PASSWORD"),
+			From:     stringEnv("SMTP_FROM", ""),
+		},
 	}
 
 	// if cfg.Database.Password == "" {
@@ -121,6 +179,26 @@ func Load() (Config, error) {
 	}
 	if cfg.Database.MaxIdleConns > cfg.Database.MaxOpenConns {
 		return Config{}, errors.New("DB_MAX_IDLE_CONNS must not exceed DB_MAX_OPEN_CONNS")
+	}
+	if cfg.App.Environment == "production" {
+		if cfg.Database.Password == "" {
+			return Config{}, errors.New("DB_PASSWORD is required in production")
+		}
+		if len(cfg.Security.JWTSecret) < 32 || cfg.Security.JWTSecret == "development-only-change-this-secret-now" {
+			return Config{}, errors.New("JWT_SECRET must be a unique value of at least 32 characters in production")
+		}
+		if len(cfg.Security.OTPPepper) < 32 || cfg.Security.OTPPepper == "development-only-otp-pepper" {
+			return Config{}, errors.New("OTP_PEPPER must be a unique value of at least 32 characters in production")
+		}
+		if cfg.Security.ExposeTestOTP {
+			return Config{}, errors.New("AUTH_EXPOSE_TEST_OTP must be false in production")
+		}
+		if len(cfg.Security.GoogleClientIDs) == 0 {
+			return Config{}, errors.New("GOOGLE_CLIENT_IDS is required in production")
+		}
+		if cfg.SMTP.Host == "" || cfg.SMTP.From == "" {
+			return Config{}, errors.New("SMTP_HOST and SMTP_FROM are required in production")
+		}
 	}
 
 	return cfg, nil
@@ -166,4 +244,16 @@ func csvEnv(key, fallback string) []string {
 		}
 	}
 	return result
+}
+
+func boolEnv(key string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
