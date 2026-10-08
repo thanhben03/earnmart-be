@@ -1,0 +1,43 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: earnmart
+      MYSQL_USER: earnmart
+      MYSQL_PASSWORD: earnmart_secret
+      MYSQL_ROOT_PASSWORD: root_secret
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./migrations/000001_create_users.up.sql:/docker-entrypoint-initdb.d/000001_create_users.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot_secret"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build: .
+    environment:
+      APP_NAME: earnmart-api
+      APP_ENV: production
+      HTTP_PORT: 8080
+      CORS_ALLOW_ORIGINS: http://localhost:3000
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: earnmart
+      DB_USER: earnmart
+      DB_PASSWORD: earnmart_secret
+      BCRYPT_COST: 12
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+
